@@ -13,125 +13,51 @@ set (VSOMEIP_HOTFIX_VERSION 0)
 
 set (VSOMEIP_VERSION ${VSOMEIP_MAJOR_VERSION}.${VSOMEIP_MINOR_VERSION}.${VSOMEIP_PATCH_VERSION})
 set (PACKAGE_VERSION ${VSOMEIP_VERSION}) # Used in documentatin/doxygen.in
-set (CMAKE_VERBOSE_MAKEFILE off)
-
-if (NOT GTEST_ROOT)
-    if (DEFINED ENV{GTEST_ROOT})
-        set(GTEST_ROOT $ENV{GTEST_ROOT})
-    else()
-        set(GTEST_ROOT "n/a" CACHE STRING "Path to root folder of googletest. Must be set for building the tests.")
-    endif()
-endif()
 
 ###################################################################################################
-# see http://www.cmake.org/Wiki/CMake/Tutorials/How_to_create_a_ProjectConfig.cmake_file
-###################################################################################################
-
-# Offer the user the choice of overriding the installation directories
-set (INSTALL_LIB_DIR lib CACHE PATH "Installation directory for libraries")
-set (INSTALL_BIN_DIR bin CACHE PATH "Installation directory for executables")
-set (INSTALL_INCLUDE_DIR include CACHE PATH "Installation directory for header files")
-
-if (WIN32 AND NOT CYGWIN)
-    set (DEF_INSTALL_CMAKE_DIR CMake)
-else ()
-    set (DEF_INSTALL_CMAKE_DIR lib/cmake/vsomeip)
-endif ()
-
-set (INSTALL_CMAKE_DIR ${DEF_INSTALL_CMAKE_DIR} CACHE PATH "Installation directory for CMake files")
-
-# Make relative paths absolute (needed later on)
-foreach (p LIB BIN INCLUDE CMAKE)
-    set (var INSTALL_${p}_DIR)
-    if (NOT IS_ABSOLUTE "${${var}}")
-        set (ABSOLUTE_${var} "${CMAKE_INSTALL_PREFIX}/${${var}}") # Add all targets to the build-tree export set
-    endif ()
-endforeach ()
+# Use Conan.io
+include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
+conan_basic_setup()
 
 ###################################################################################################
-# Set a default build type if none was specified
-set(default_build_type "RelWithDebInfo")
-if(NOT CMAKE_BUILD_TYPE)
-  message(STATUS "Setting build type to '${default_build_type}' as none was specified.")
-  set(CMAKE_BUILD_TYPE "${default_build_type}" CACHE STRING "Choose the type of build." FORCE)
-  # Set the possible values of build type for cmake-gui
-  set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
-endif()
-
-# OS
-if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-    set(OS "LINUX")
-    set(DL_LIBRARY "dl")
-    set(EXPORTSYMBOLS "-Wl,-export-dynamic -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/exportmap.gcc")
-    set(NO_DEPRECATED "")
-    set(OPTIMIZE "")
-    set(OS_CXX_FLAGS "-D_GLIBCXX_USE_NANOSLEEP -pthread -O -Wall -Wextra -Wformat -Wformat-security -Wconversion -fexceptions -fstrict-aliasing -fstack-protector -fasynchronous-unwind-tables -fno-omit-frame-pointer -D_FORTIFY_SOURCE=2")
-endif (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
-
-if (${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
-    set(OS "FREEBSD")
-    set(DL_LIBRARY "")
-    set(EXPORTSYMBOLS "")
-    set(NO_DEPRECATED "-Wno-deprecated")
-    set(OPTIMIZE "")
-    set(OS_CXX_FLAGS "-pthread")
-endif (${CMAKE_SYSTEM_NAME} MATCHES "FreeBSD")
-
-# Signal handling
-if (ENABLE_SIGNAL_HANDLING)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DVSOMEIP_ENABLE_SIGNAL_HANDLING")
-endif ()
-
-include_directories(
-    "interface" 
-)
-
-# Threads
+# Packages
+find_package(Boost REQUIRED COMPONENTS system thread log)
 find_package(Threads REQUIRED)
 
-# Boost
-find_package( Boost 1.55 COMPONENTS system thread log REQUIRED )
-include_directories( ${Boost_INCLUDE_DIR} )
+###################################################################################################
+# Signal handling
+#if (ENABLE_SIGNAL_HANDLING)
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DVSOMEIP_ENABLE_SIGNAL_HANDLING")
+#endif ()
 
-if(Boost_FOUND)
-  if(Boost_LIBRARY_DIR)
-    MESSAGE( STATUS "Boost_LIBRARY_DIR not empty using it: ${Boost_LIBRARY_DIR}" )
-  else()
-    if(BOOST_LIBRARYDIR)
-      MESSAGE( STATUS "Boost_LIBRARY_DIR empty but BOOST_LIBRARYDIR is set setting Boost_LIBRARY_DIR to: ${BOOST_LIBRARYDIR}" )
-      set(Boost_LIBRARY_DIR ${BOOST_LIBRARYDIR})
-    endif()
-  endif()
+###################################################################################################
+# Options
+# Yet missing
+# automotive-dlt --> -DUSE_DLT
+# libsystemd --> !-DWITHOUT_SYSTEMD
+
+###################################################################################################
+# Global definitions
+if (${VSOMEIP_HOTFIX_VERSION} EQUAL 0)
+    add_definitions(-DVSOMEIP_VERSION="${VSOMEIP_VERSION}")
 else()
-  MESSAGE( STATUS "Boost was not found!")
+    add_definitions(-DVSOMEIP_VERSION="${VSOMEIP_VERSION}.${VSOMEIP_HOTFIX_VERSION}")
 endif()
 
-# DLT
-find_package(PkgConfig)
-pkg_check_modules(DLT "automotive-dlt >= 2.11")
-IF(DLT_FOUND) 
-     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DUSE_DLT")
-ENDIF(DLT_FOUND)
+set(BOOST_WINDOWS_VERSION "0x600" CACHE STRING "Set the same Version as the Version with which Boost was built, otherwise there will be errors. (normaly 0x600 is for Windows 7 and 0x501 is for Windows XP)")
+if (WIN32)
+    add_definitions(-D_WINSOCK_DEPRECATED_NO_WARNINGS -D_WIN32_WINNT=${BOOST_WINDOWS_VERSION} -DWIN32 -DBOOST_ASIO_DISABLE_IOCP /EHsc)
+endif()
 
-# SystemD
-pkg_check_modules(SystemD "libsystemd")
-
-if(NOT SystemD_FOUND)
-MESSAGE( STATUS "Systemd was not found, watchdog disabled!")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DWITHOUT_SYSTEMD")
-endif(NOT SystemD_FOUND)
-
-include_directories(
-    include
-    implementation/helper
-    ${DLT_INCLUDE_DIRS}
+###################################################################################################
+# confugure internal.hpp for correct version number
+configure_file (
+   "${CMAKE_CURRENT_SOURCE_DIR}/implementation/configuration/include/internal.hpp.in"
+   "${CMAKE_CURRENT_BINARY_DIR}/implementation/configuration/include/internal.hpp"
 )
 
-link_directories(
-    ${DLT_LIBDIR}
-)
-
-# Base library
+###################################################################################################
+# Base library: vsomeip
 file(GLOB vsomeip_SRC
     "implementation/endpoints/src/*.cpp"
     "implementation/logging/src/*.cpp"
@@ -150,35 +76,45 @@ file(GLOB_RECURSE vsomeip_e2e_SRC
 list(SORT vsomeip_SRC)
 list(SORT vsomeip_e2e_SRC)
 
-if (${VSOMEIP_HOTFIX_VERSION} EQUAL 0)
-add_definitions(-DVSOMEIP_VERSION="${VSOMEIP_VERSION}")
-else()
-add_definitions(-DVSOMEIP_VERSION="${VSOMEIP_VERSION}.${VSOMEIP_HOTFIX_VERSION}")
-endif()
-
-if (MSVC)
-    message("using MSVC Compiler")
-    # add_definitions(-DVSOMEIP_DLL_COMPILATION) now it is controlled per target
-    SET(BOOST_WINDOWS_VERSION "0x600" CACHE STRING "Set the same Version as the Version with which Boost was built, otherwise there will be errors. (normaly 0x600 is for Windows 7 and 0x501 is for Windows XP)")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_WINSOCK_DEPRECATED_NO_WARNINGS -D_WIN32_WINNT=${BOOST_WINDOWS_VERSION} -DWIN32 -DBOOST_LOG_DYN_LINK -DBOOST_ASIO_DISABLE_IOCP /EHsc")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_CRT_SECURE_NO_WARNINGS -D_SCL_SECURE_NO_WARNINGS -D_WINSOCK_DEPRECATED_NO_WARNINGS -D_WIN32_WINNT=${BOOST_WINDOWS_VERSION} -DWIN32 -DBOOST_LOG_DYN_LINK -DBOOST_ASIO_DISABLE_IOCP /EHsc")
-    set(USE_RT "")
-    set(Boost_LIBRARIES "")
-    link_directories(${Boost_LIBRARY_DIR_DEBUG})
-    ADD_DEFINITIONS( -DBOOST_ALL_DYN_LINK )
-else()
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D${OS} ${OS_CXX_FLAGS} -DBOOST_LOG_DYN_LINK -g ${OPTIMIZE} -std=c++11 ${NO_DEPRECATED} ${EXPORTSYMBOLS}")
-    set(USE_RT "rt")
-endif()
-
 add_library(vsomeip SHARED ${vsomeip_SRC} ${vsomeip_e2e_SRC})
-set_target_properties (vsomeip PROPERTIES VERSION ${VSOMEIP_VERSION} SOVERSION ${VSOMEIP_MAJOR_VERSION})
+target_include_directories(vsomeip
+    PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/implementation>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/implementation>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/implementation/helper>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/implementation/configuration/include>
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/interface>
+        $<INSTALL_INTERFACE:include>
+    )
+target_compile_definitions(vsomeip
+    PRIVATE
+        -DWITHOUT_SYSTEMD
+    )
+set_target_properties (vsomeip PROPERTIES 
+    VERSION ${VSOMEIP_VERSION} 
+    SOVERSION ${VSOMEIP_MAJOR_VERSION}
+    )
+
 # PRIVATE means the listed libraries won't be included in the "link interface",
 # meaning the exported vsomeipTargets.cmake targets won't try to link against
 # them (which shouldn't be required). ${Boost_LIBRARIES} includes absolute
 # build host paths as of writing, which also makes this important as it breaks
 # the build.
-target_link_libraries(vsomeip PRIVATE ${Boost_LIBRARIES} ${USE_RT} ${DL_LIBRARY} ${DLT_LIBRARIES} ${SystemD_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(vsomeip 
+    PUBLIC
+        Boost::system Boost::thread
+    PRIVATE
+        #${Boost_LIBRARIES} ${USE_RT} ${DL_LIBRARY} ${DLT_LIBRARIES} ${SystemD_LIBRARIES} 
+        ${CMAKE_THREAD_LIBS_INIT}
+    )
+
+#!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+# WORKMARK
+#!!!!!!!!!!!!!!!!!!!!!!!
+RETURN()
+
+
 
 # Configuration library
 file(GLOB vsomeip-cfg_SRC
@@ -297,11 +233,6 @@ configure_file (vsomeipConfig.cmake.in "${PROJECT_BINARY_DIR}${CMAKE_FILES_DIREC
 # ... for both
 configure_file (vsomeipConfigVersion.cmake.in "${PROJECT_BINARY_DIR}/vsomeipConfigVersion.cmake" @ONLY)
 
-# confugure internal.hpp for correct version number
-configure_file (
-   "${PROJECT_SOURCE_DIR}/implementation/configuration/include/internal.hpp.in"
-   "${PROJECT_SOURCE_DIR}/implementation/configuration/include/internal.hpp"
-)
 
 # Install the vsomeipConfig.cmake and vsomeipConfigVersion.cmake
 install (
@@ -322,6 +253,7 @@ install (
 ##############################################################################
 # build documentation
 ##############################################################################
+if (UNDEF)
 add_custom_target(doc)
 
 find_package(Doxygen)
@@ -379,6 +311,7 @@ else()
                                -o documentation/vsomeipUserGuide.html
                                ${PROJECT_BINARY_DIR}/../documentation/vsomeipUserGuide)
 endif()
+endif()
 
 ##############################################################################
 # create pkg-config file
@@ -389,7 +322,8 @@ endif()
 
 ##############################################################################
 # build daemon (Non-Windows only)
-if (NOT MSVC)
+if (UNDEF)
+if (NOT WIN32)
 add_custom_target( daemon )
 add_subdirectory( daemon )
 endif()
@@ -411,42 +345,11 @@ if (NOT MSVC)
        add_subdirectory( plugins )
     endif()
 endif()
-
-
-##############################################################################
-# Test section
-##############################################################################
-
-##############################################################################
-# google test
-
-# check for set environment variable
-if(${GTEST_ROOT} STREQUAL "n/a")
-    message(STATUS "GTEST_ROOT is not defined. For building the tests the variable
-             GTEST_ROOT has to be defined. Tests can not be built.")
-    # early exit
-    return()  # test can not be build -> make commands build_tests and check are not available
-else()
-    message(STATUS "GTEST_ROOT is set. gtest root path set to ${GTEST_ROOT}")
 endif()
-
-# build google test as static library (always) -> therefore deactivate BUILD_SHARED_LIBS in case it is active
-set(BUILD_SHARED_LIBS_AUTOMATIC_OFF 0)
-if ("${BUILD_SHARED_LIBS}" STREQUAL "ON")
-    set(BUILD_SHARED_LIBS OFF)
-    set(BUILD_SHARED_LIBS_AUTOMATIC_OFF 1)
-endif()
-add_subdirectory(${GTEST_ROOT} ${CMAKE_CURRENT_BINARY_DIR}/gtest EXCLUDE_FROM_ALL)
-if ("${BUILD_SHARED_LIBS_AUTOMATIC_OFF}" STREQUAL "1")
-    set(BUILD_SHARED_LIBS ON)
-    set(BUILD_SHARED_LIBS_AUTOMATIC_OFF 0)
-endif()
-
-
 
 ##############################################################################
 # build tests
-
+if (UNDEF)
 enable_testing()
 SET(TESTS_BAT "OFF" CACHE BOOL
     "Controls whether only BAT tests should be build or not")
@@ -496,8 +399,10 @@ set(CMAKE_CTEST_COMMAND ctest -V)
 add_custom_target(check COMMAND ${CMAKE_CTEST_COMMAND})
 
 add_dependencies(check build_tests)
+endif()
 
 ##############################################################################
 # add test directory
-
+if (UNDEF)
 add_subdirectory( test EXCLUDE_FROM_ALL )
+endif()
